@@ -5,9 +5,6 @@ import (
 	"sort"
 )
 
-// Middleware is the signature of a middleware function.
-type Middleware func(next http.HandlerFunc) http.HandlerFunc
-
 // handler is used to define the HTTP handler.
 type handler struct {
 	// check is used to check if the route specified is used by this and consume its part if so.
@@ -27,20 +24,15 @@ type ErrorHandler func(*Context, error) (result any, status int)
 
 // Router is used to define the base router.
 type Router struct {
-	httpMiddleware []Middleware
-	handlers       []handler
-	errHandler     ErrorHandler
-	maxBodySize    int
+	handlers         []handler
+	errHandler       ErrorHandler
+	maxBodySize      int
+	disableAutoProxy bool
 }
 
 // SetMaxBodySize sets the maximum body size for the router. 0 means the default of 2MB.
 func (r *Router) SetMaxBodySize(size int) {
 	r.maxBodySize = size
-}
-
-// Use adds a middleware to the router.
-func (r *Router) Use(m Middleware) {
-	r.httpMiddleware = append(r.httpMiddleware, m)
 }
 
 type routesSorter struct {
@@ -107,6 +99,11 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	// Throw a 404.
 	ctx.pathRemainder = path
 	ctx.handleError(RouteNotFound)
+}
+
+// DisableAutoProxy is used to turn off transforming trusted proxy servers into the real IP.
+func (r *Router) DisableAutoProxy() {
+	r.disableAutoProxy = true
 }
 
 var _ http.Handler = (*Router)(nil)

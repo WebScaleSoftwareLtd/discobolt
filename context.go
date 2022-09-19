@@ -7,6 +7,7 @@ import (
 	"encoding/xml"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"reflect"
 	"sort"
@@ -27,12 +28,52 @@ type contextBase struct {
 	consumed bool
 }
 
+// Check is used to check if the current route passes a check. If error is not nil, execution will be aborted and
+// the error will be returned to the user.
+type Check func() error
+
 // Context is used to define the HTTP context.
 type Context struct {
 	*contextBase
 
 	pathRemainder []byte
 	handlers      []handler
+	checks        []Check
+}
+
+// RequestHeaders returns the request headers.
+func (c *Context) RequestHeaders() http.Header {
+	return c.req.Header
+}
+
+// ResponseHeaders returns the response headers.
+func (c *Context) ResponseHeaders() http.Header {
+	return c.w.Header()
+}
+
+// RemoteIP returns the remote IP address. If the request is behind a known proxy IP, it will try to get the real IP.
+// Supported proxies are currently Cloudflare and Fastly.
+func (c *Context) RemoteIP() net.IP {
+	ipS, _, err := net.SplitHostPort(c.req.RemoteAddr)
+	if err != nil {
+		return nil
+	}
+	ip := net.ParseIP(ipS)
+	if !c.r.disableAutoProxy {
+		header := evalIp(ip)
+		if header != "" {
+			h := c.req.Header.Get(header)
+			if h != "" {
+				return net.ParseIP(h)
+			}
+		}
+	}
+	return ip
+}
+
+// AddCheck adds a check to the context.
+func AddCheck(ctx *Context, check Check) {
+	ctx.checks = append(ctx.checks, check)
 }
 
 func (c *Context) addHandler(h handler) {
@@ -108,8 +149,12 @@ func (c *Context) consumeHandler(status int, body any) (err error) {
 	// Handle getting the Accept header.
 	accept := c.req.Header.Get("Accept")
 	if accept == "" {
-		// Default to JSON.
-		accept = "application/json"
+		// Try setting it to the content type.
+		accept = c.req.Header.Get("Content-Type")
+		if accept == "" {
+			// Default to JSON.
+			accept = "application/json"
+		}
 	}
 
 	// Handles setting the consumed state.
@@ -214,9 +259,23 @@ func (c *Context) consumeHandler(status int, body any) (err error) {
 	return
 }
 
+// Runs all checks.
+func (c *Context) runChecks() (err error) {
+	for _, check := range c.checks {
+		if err = check(); err != nil {
+			c.handleError(err)
+			return
+		}
+	}
+	return
+}
+
 // Executed after a group is done with its function.
 func (c *Context) afterExecute() {
 	if c.consumed {
+		return
+	}
+	if err := c.runChecks(); err != nil {
 		return
 	}
 	for _, h := range c.handlers {
@@ -239,6 +298,11 @@ func (c *Context) afterExecute() {
 func methodHandler[T any](c *Context, method string, handler func() (T, error), inputs []any) {
 	// Handle preliminary checks.
 	if c.consumed || c.req.Method != method {
+		return
+	}
+
+	// Run all the checks within this context.
+	if err := c.runChecks(); err != nil {
 		return
 	}
 

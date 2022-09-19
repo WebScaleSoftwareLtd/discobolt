@@ -1,0 +1,53 @@
+# This file contains all known proxies to this library. They should be formatted as "<ip range> <ip header>".
+# Lines starting with a hash are comments.
+
+# Cloudflare IPv4
+173.245.48.0/20 CF-Connecting-IP
+103.21.244.0/22 CF-Connecting-IP
+103.22.200.0/22 CF-Connecting-IP
+103.31.4.0/22 CF-Connecting-IP
+141.101.64.0/18 CF-Connecting-IP
+108.162.192.0/18 CF-Connecting-IP
+190.93.240.0/20 CF-Connecting-IP
+188.114.96.0/20 CF-Connecting-IP
+197.234.240.0/22 CF-Connecting-IP
+198.41.128.0/17 CF-Connecting-IP
+162.158.0.0/15 CF-Connecting-IP
+104.16.0.0/13 CF-Connecting-IP
+104.24.0.0/14 CF-Connecting-IP
+172.64.0.0/13 CF-Connecting-IP
+131.0.72.0/22 CF-Connecting-IP
+
+# Cloudflare IPv6
+2400:cb00::/32 CF-Connecting-IP
+2606:4700::/32 CF-Connecting-IP
+2803:f800::/32 CF-Connecting-IP
+2405:b500::/32 CF-Connecting-IP
+2405:8100::/32 CF-Connecting-IP
+2a06:98c0::/29 CF-Connecting-IP
+2c0f:f248::/32 CF-Connecting-IP
+
+# Fastly IPv4
+23.235.32.0/20 Fastly-Client-IP
+43.249.72.0/22 Fastly-Client-IP
+103.244.50.0/24 Fastly-Client-IP
+103.245.222.0/23 Fastly-Client-IP
+103.245.224.0/24 Fastly-Client-IP
+104.156.80.0/20 Fastly-Client-IP
+140.248.64.0/18 Fastly-Client-IP
+140.248.128.0/17 Fastly-Client-IP
+146.75.0.0/17 Fastly-Client-IP
+151.101.0.0/16 Fastly-Client-IP
+157.52.64.0/18 Fastly-Client-IP
+167.82.0.0/17 Fastly-Client-IP
+167.82.128.0/20 Fastly-Client-IP
+167.82.160.0/20 Fastly-Client-IP
+167.82.224.0/20 Fastly-Client-IP
+172.111.64.0/18 Fastly-Client-IP
+185.31.16.0/22 Fastly-Client-IP
+199.27.72.0/21 Fastly-Client-IP
+199.232.0.0/16 Fastly-Client-IP
+
+# Fastly IPv6
+2a04:4e40::/32 Fastly-Client-IP
+2a04:4e42::/32 Fastly-Client-IP

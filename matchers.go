@@ -25,8 +25,8 @@ sliceRunner:
 	return path, []byte{}
 }
 
-// TextContent is used to match based on the text content specified.
-func TextContent(c RouterOrContext, text string, hn func(*Context)) {
+// Static is used to match based on the text content specified.
+func Static(c RouterOrContext, text string, hn func(*Context)) {
 	h := handler{
 		check: func(path []byte) (bool, []byte, any) {
 			contents, remainder := consumeUntilSlash(path)
