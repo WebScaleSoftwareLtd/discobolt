@@ -161,15 +161,15 @@ The error handler by default is very basic. It returns the following:
 You likely want to change this. To do this, we can call `SetErrorHandler` on the router:
 ```go
 router.SetErrorHandler(func(ctx *Context, err error) (result any, status int) {
-    if discobolt.IsBadRequest(err) {
-        return "something went wrong", 400
-    }
+	if discobolt.IsBadRequest(err) {
+		return "something went wrong", 400
+	}
 
-    if errors.Is(err, discobolt.ErrRouteNotFound) {
-        return "not found", 404
-    }
+	if errors.Is(err, discobolt.ErrRouteNotFound) {
+		return "not found", 404
+	}
 
-    // TODO: something else here!
+	// TODO: something else here!
 	return "something went wrong", 500
 })
 ```
