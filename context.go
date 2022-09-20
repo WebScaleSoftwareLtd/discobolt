@@ -61,6 +61,11 @@ func (c *Context) ResponseHeaders() http.Header {
 	return c.w.Header()
 }
 
+// URL returns the URL of the request.
+func (c *Context) URL() *url.URL {
+	return c.req.URL
+}
+
 // RemoteIP returns the remote IP address. If the request is behind a known proxy IP, it will try to get the real IP.
 // Supported proxies are currently Cloudflare and Fastly.
 func (c *Context) RemoteIP() net.IP {
