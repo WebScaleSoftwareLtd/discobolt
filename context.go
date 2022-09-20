@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -303,6 +304,19 @@ func (c *Context) afterExecute() {
 	if c.consumed {
 		return
 	}
+
+	// Add panic protection.
+	defer func() {
+		if errPossibly := recover(); errPossibly != nil {
+			var err error
+			if errPossibly, ok := errPossibly.(error); ok {
+				err = errPossibly
+			} else {
+				err = fmt.Errorf("%v", errPossibly)
+			}
+			c.handleError(err)
+		}
+	}()
 
 	if c.req.Method == "GET" {
 		if c.webSocketUpgrader == nil {
