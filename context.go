@@ -9,11 +9,14 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"reflect"
 	"sort"
 	"strconv"
 	"strings"
 
+	"github.com/gorilla/schema"
+	"github.com/gorilla/websocket"
 	"github.com/vmihailenco/msgpack"
 	"gopkg.in/yaml.v3"
 )
@@ -35,6 +38,12 @@ type Check func() error
 // Context is used to define the HTTP context.
 type Context struct {
 	*contextBase
+
+	// Defines the values needed for websocket handling. It kinda sucks that we need to save GET until the end,
+	// but it does mean that we can manage this better.
+	webSocketUpgrader *websocket.Upgrader
+	webSocketHandler  func(*websocket.Conn) error
+	getRunner         func()
 
 	pathRemainder []byte
 	handlers      []handler
@@ -84,6 +93,20 @@ func (c *Context) addHandler(h handler) {
 	sort.Sort(routesSorter{a: c.handlers})
 }
 
+// IsBadRequest returns true if the error is a bad request error.
+func IsBadRequest(err error) bool {
+	var badReqErr *BadRequest
+	nextErr := err
+	for nextErr != nil {
+		if br, ok := nextErr.(BadRequest); ok {
+			badReqErr = &br
+			break
+		}
+		nextErr = errors.Unwrap(nextErr)
+	}
+	return badReqErr != nil
+}
+
 // Handles any errors that occur.
 func (c *Context) handleError(err error) {
 	// Try and hunt the user facing error.
@@ -120,8 +143,13 @@ func (c *Context) handleError(err error) {
 	message := "Internal Server Error"
 	status := 500
 	if errors.Is(err, RouteNotFound) {
+		// Is just a not found error.
 		message = "Not Found"
 		status = 404
+	} else if IsBadRequest(err) {
+		// Is a bad request error.
+		message = "Bad Request"
+		status = 400
 	}
 	_ = c.consumeHandler(status, map[string]string{"message": message})
 }
@@ -275,6 +303,37 @@ func (c *Context) afterExecute() {
 	if c.consumed {
 		return
 	}
+
+	if c.req.Method == "GET" {
+		if c.webSocketUpgrader == nil {
+			// Just run the GET handler.
+			if c.getRunner != nil {
+				c.getRunner()
+			}
+		} else if len(c.pathRemainder) == 0 {
+			if strings.Contains(strings.ToLower(c.req.Header.Get("Connection")), "upgrade") &&
+				strings.ToLower(c.req.Header.Get("Upgrade")) == "websocket" {
+				// Upgrade to a websocket.
+				conn, err := c.webSocketUpgrader.Upgrade(c.w, c.req, nil)
+				c.consumed = true
+				if err != nil {
+					// Return here. This error is a bit special.
+					return
+				}
+				if err = c.webSocketHandler(conn); err != nil {
+					// Ok fine. The least worse thing here is to not output to the user the error info.
+					c.handleError(err)
+				}
+				return
+			}
+
+			// Run the GET handler.
+			if c.getRunner != nil {
+				c.getRunner()
+			}
+		}
+	}
+
 	if err := c.runChecks(); err != nil {
 		return
 	}
@@ -295,6 +354,16 @@ func (c *Context) afterExecute() {
 	}
 }
 
+var (
+	queryDecoder = schema.NewDecoder()
+	formDecoder  = schema.NewDecoder()
+)
+
+func init() {
+	queryDecoder.SetAliasTag("query")
+	formDecoder.SetAliasTag("query")
+}
+
 func methodHandler[T any](c *Context, method string, handler func() (T, error), inputs []any) {
 	// Handle preliminary checks.
 	if c.consumed || c.req.Method != method {
@@ -307,16 +376,16 @@ func methodHandler[T any](c *Context, method string, handler func() (T, error), 
 	}
 
 	// Handle checking if the remaining path supports this.
-	remainderLen := len(c.pathRemainder)
-	if remainderLen > 0 {
-		// Check if the length is 1 and the first character is a slash.
-		if remainderLen == 1 && c.pathRemainder[0] == '/' {
-			// TODO: figure out how we want to handle trailing slashes.
-			return
-		}
-
+	if len(c.pathRemainder) > 0 {
 		// This is not ours to consume.
 		return
+	}
+
+	// Get the memory limit.
+	limit := c.r.maxBodySize
+	if limit == 0 {
+		// Default to 2MB.
+		limit = 2 * 1024 * 1024
 	}
 
 	// Get the content type and if applicable the body.
@@ -326,15 +395,8 @@ func methodHandler[T any](c *Context, method string, handler func() (T, error), 
 		// It doesn't actually matter what the content type is, the type should become application/x-www-form-urlencoded.
 		contentType = "application/x-www-form-urlencoded"
 	} else {
-		if contentType != "application/x-www-form-urlencoded" {
-			// Read the body up to the limit set on the router.
-			limit := c.r.maxBodySize
-			if limit == 0 {
-				// Default to 2MB.
-				limit = 2 * 1024 * 1024
-			}
-			postedBody, _ = io.ReadAll(io.LimitReader(c.req.Body, int64(limit)))
-		}
+		// Read the body up to the limit set on the router.
+		postedBody, _ = io.ReadAll(io.LimitReader(c.req.Body, int64(limit)))
 	}
 
 	// Go through each input and parse it.
@@ -342,28 +404,59 @@ func methodHandler[T any](c *Context, method string, handler func() (T, error), 
 		switch contentType {
 		case "application/json":
 			if err := json.Unmarshal(postedBody, v); err != nil {
-				c.handleError(err)
+				c.handleError(BadRequest{err})
 				return
 			}
 		case "application/xml", "text/xml":
 			if err := xml.Unmarshal(postedBody, v); err != nil {
-				c.handleError(err)
+				c.handleError(BadRequest{err})
 				return
 			}
 		case "application/x-msgpack", "application/msgpack":
 			if err := msgpack.NewDecoder(bytes.NewReader(postedBody)).UseJSONTag(true).Decode(v); err != nil {
-				c.handleError(err)
+				c.handleError(BadRequest{err})
 				return
 			}
 		case "application/yaml", "text/yaml":
 			if err := yaml.Unmarshal(postedBody, v); err != nil {
-				c.handleError(err)
+				c.handleError(BadRequest{err})
 				return
 			}
 		case "application/x-www-form-urlencoded":
-			// TODO
+			var query url.Values
+			if len(postedBody) > 0 {
+				query, _ = url.ParseQuery(string(postedBody))
+			} else {
+				query = c.req.URL.Query()
+			}
+			if err := queryDecoder.Decode(v, query); err != nil {
+				c.handleError(BadRequest{err})
+				return
+			}
 		default:
-			// TODO
+			// Handle multipart form data.
+			if strings.HasPrefix(contentType, "multipart/form-data") {
+				if err := c.req.ParseMultipartForm(int64(limit)); err != nil {
+					c.handleError(BadRequest{err})
+					return
+				}
+				if err := formDecoder.Decode(v, c.req.MultipartForm.Value); err != nil {
+					c.handleError(BadRequest{err})
+					return
+				}
+			} else {
+				// Check if this is io.Writer.
+				if w, ok := v.(io.Writer); ok {
+					// Write the body to the writer.
+					_, _ = w.Write(postedBody)
+				} else {
+					// Assume JSON if there is no content type.
+					if err := json.Unmarshal(postedBody, v); err != nil {
+						c.handleError(BadRequest{err})
+						return
+					}
+				}
+			}
 		}
 	}
 
