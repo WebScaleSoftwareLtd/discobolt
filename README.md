@@ -4,8 +4,8 @@
 
 **Discobolt is under active development. Testing is not complete and this is not battle tested yet. Quality of life fixes, tests, and documentation generation are works in progress!**
 
-Discobolt is a Go library to make building web applications as easy as building functions with generics. It has the following features:
-- **Clear Routing:** The actual routing is designed to be done in one nested place. This makes it clear during refactoring where everything in the app actually is. If you need to add a bunch of routes under one context, you can simply call a functiln.
+Discobolt is a Go library that implements `http.Handler` to make building web applications as easy as building functions with generics. It has the following features:
+- **Clear Routing:** The actual routing is designed to be done in one nested place. This makes it clear during refactoring where everything in the app actually is. If you need to add a bunch of routes under one context, you can simply call a function.
 - **Incredible Content Type Support:** See [input and output types](#input-and-output-types) for more information, but our list is extensive and supports things like HTML to allow you to write your whole site within Discobolt.
 - **Keeps It Simple:** Discobolt is incredibly simple to write functions for. The API functions are generic and are designed to be added inside the context `discobolt.GET(ctx, func() (T, error) {...})`. The type returned is turned into the content types listed below, and errors are automatically passed to the error handler (unless they implement the `UserFacingError` interface, then it is returned to the user).
 
@@ -40,7 +40,7 @@ From here, you will want to use matchers to go ahead and match the route you wan
 
 From here, inside the matcher you wish to use for a route (or parents of it, you are not limited to a static or dynamic param, it can fallback), you can go ahead and do one of the following:
 - **Add a HTTP method:** Using `discobolt.<method>`, you can go ahead and add the HTTP logic you want in this by adding a function with the signature `func() (T, error)`. The type returned will be transformed as per the content type information [above](#input-and-output-types). See [error handling](#error-handling) for information on how errors are processed.
-- **Add a WebSocket handler:** Using `discobolt.WebSocket(*Context, *websocket.Upgrader, func(*websocket.Conn))`, you can go ahead and add a WebSocket handler. The function is called with the upgraded connection if successful and this is a upgrade request. Errors will go to the [error handler](#error-handling) but any results will not be sent to the user.
+- **Add a WebSocket handler:** Using `discobolt.WebSocket(*Context, *websocket.Upgrader, func(*websocket.Conn) error)`, you can go ahead and add a WebSocket handler. The function is called with the upgraded connection if successful and this is a upgrade request. Errors will go to the [error handler](#error-handling) but any results will not be sent to the user.
 
 For example, if you wanted to match `/api/v1/hello/:name`, you would do the following:
 
@@ -59,6 +59,33 @@ discobolt.Static(router, "api", func(ctx *discobolt.Context) {
 	})
 })
 ```
+
+From here, you can go ahead and start the server:
+
+```go
+if err := http.ListenAndServe(":8080", router); err != nil {
+    panic(err)
+}
+```
+
+You will then likely want to [add a custom error handler](#error-handling) and [parse bodies/query strings](#http-bodiesqueries).
+
+## HTTP bodies/queries
+To parse query params/HTTP bodies, you can first make a struct that accepts the input types listed above:
+```go
+type HelloWorldInputs struct {
+    Name string `json:"name" form:"name" query:"name" xml:"name" yaml:"name"`
+}
+```
+
+From here, you can simply add a pointer to it after the function. If it is a GET request, this will only transform query parameters, but other methods will use the input types listed above:
+```go
+...
+var input HelloWorldInputs
+discobolt.GET(ctx, func() (T, error) {...}, &input)
+...
+```
+If this fails, it will be caught by the [error handler](#error-handling) wrapped by a bad request type. You can use `IsBadRequest(err)` to check if it is a bad request error.
 
 ## Custom checks
 Inside a HTTP router, you may desire to add a check. The role of a check is to allow you to check something before executing any methods on the current matcher or any matcher afterwards. This can be done with the `AddCheck` function:
@@ -125,3 +152,26 @@ func (e userError) HTML() ([]byte, error) {
 <p>` + html.EscapeString(e.Message) + "</p>"), nil
 }
 ```
+
+The error handler by default is very basic. It returns the following:
+- **Error is bad request:** Return status 400 along with a body in the format {message => Bad Request}.
+- **Error is route not found:** Return status 404 along with a body in the format {message => Not Found}.
+- **Error is something not user facing:** Return status 500 along with a body in the format {message => Internal Server Error}.
+
+You likely want to change this. To do this, we can call `SetErrorHandler` on the router:
+```go
+router.SetErrorHandler(func(ctx *Context, err error) (result any, status int) {
+    if discobolt.IsBadRequest(err) {
+        return "something went wrong", 400
+    }
+
+    if errors.Is(err, discobolt.ErrRouteNotFound) {
+        return "not found", 404
+    }
+
+    // TODO: something else here!
+	return "something went wrong", 500
+})
+```
+
+The body that is sent is converted to the content type that the user requested. If the user did not request a content type, it will be sent as JSON as per above.

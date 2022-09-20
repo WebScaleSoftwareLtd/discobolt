@@ -380,7 +380,7 @@ var (
 
 func init() {
 	queryDecoder.SetAliasTag("query")
-	formDecoder.SetAliasTag("query")
+	formDecoder.SetAliasTag("form")
 }
 
 func methodHandler[T any](c *Context, method string, handler func() (T, error), inputs []any) {

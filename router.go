@@ -30,6 +30,11 @@ type Router struct {
 	disableAutoProxy bool
 }
 
+// SetErrorHandler is used to set the error handler.
+func (r *Router) SetErrorHandler(h ErrorHandler) {
+	r.errHandler = h
+}
+
 // SetMaxBodySize sets the maximum body size for the router. 0 means the default of 2MB.
 func (r *Router) SetMaxBodySize(size int) {
 	r.maxBodySize = size
