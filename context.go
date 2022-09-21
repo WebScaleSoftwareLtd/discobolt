@@ -113,6 +113,21 @@ func IsBadRequest(err error) bool {
 	return badReqErr != nil
 }
 
+// Redirect is a special type that when detected will lead to a redirect.
+type Redirect struct {
+	URL       string
+	Permanent bool
+}
+
+// Error implements the error interface. This allows you to throw a redirect as a error and have it magically handled.
+func (Redirect) Error() string { return "redirect" }
+
+// Body returns itself to implement UserFacingError. This allows you to throw a redirect as a error and have it magically handled.
+func (r Redirect) Body() any { return r }
+
+// Status returns nothing and is just here to implement UserFacingError. This allows you to throw a redirect as a error and have it magically handled.
+func (Redirect) Status() int { return 0 }
+
 // Handles any errors that occur.
 func (c *Context) handleError(err error) {
 	// Try and hunt the user facing error.
@@ -176,6 +191,23 @@ func (c *Context) consumeHandler(status int, body any) (err error) {
 	// If the status is 204, we don't need to send anything.
 	if status == 204 {
 		c.w.WriteHeader(status)
+		c.consumed = true
+		return nil
+	}
+
+	// Handle if this is a redirect.
+	if re, ok := body.(*Redirect); ok {
+		if re == nil {
+			return errors.New("nil pointer to special redirect struct")
+		}
+		body = *re
+	}
+	if re, ok := body.(Redirect); ok {
+		code := http.StatusTemporaryRedirect
+		if re.Permanent {
+			code = http.StatusPermanentRedirect
+		}
+		http.Redirect(c.w, c.req, re.URL, code)
 		c.consumed = true
 		return nil
 	}

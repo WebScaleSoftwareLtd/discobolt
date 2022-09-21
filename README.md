@@ -175,3 +175,9 @@ router.SetErrorHandler(func(ctx *Context, err error) (result any, status int) {
 ```
 
 The body that is sent is converted to the content type that the user requested. If the user did not request a content type, it will be sent as JSON as per above.
+
+## Redirects
+
+Redirects are done by returning the `discobolt.Redirect` struct either as a error or the result. Discobolt will automatically redirect to the content following the struct contents.
+
+Redirects cannot be nil pointers.
