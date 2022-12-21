@@ -126,3 +126,21 @@ func String(c RouterOrContext, hn func(*Context, string)) {
 	}
 	c.addHandler(h)
 }
+
+// Remainder is used to match the remainder of the path when there is more than 1 char after it. Returns the raw result.
+func Remainder(c RouterOrContext, hn func(*Context, string)) {
+	h := handler{
+		check: func(path []byte) (bool, []byte, any) {
+			if len(path) > 1 {
+				return true, []byte{}, path
+			}
+			return false, path, nil
+		},
+		execute: func(ctx *Context, i any) {
+			hn(ctx, string(i.([]byte)))
+			ctx.afterExecute()
+		},
+		priority: 2,
+	}
+	c.addHandler(h)
+}
