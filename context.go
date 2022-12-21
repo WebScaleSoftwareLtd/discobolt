@@ -51,6 +51,16 @@ type Context struct {
 	checks        []Check
 }
 
+// Cookies returns the cookies.
+func (c *Context) Cookies() []*http.Cookie {
+	return c.req.Cookies()
+}
+
+// SetCookie sets a cookie on the request.
+func (c *Context) SetCookie(cookie *http.Cookie) {
+	http.SetCookie(c.w, cookie)
+}
+
 // RequestHeaders returns the request headers.
 func (c *Context) RequestHeaders() http.Header {
 	return c.req.Header
