@@ -3,6 +3,8 @@ package discobolt
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"encoding/xml"
 	"errors"
@@ -60,6 +62,37 @@ func (c *Context) Cookies() []*http.Cookie {
 func (c *Context) SetCookie(cookie *http.Cookie) {
 	http.SetCookie(c.w, cookie)
 }
+
+func generateRandomString(n int) string {
+	b := make([]byte, n)
+	_, err := rand.Read(b)
+	if err != nil {
+		panic(err)
+	}
+	return base64.URLEncoding.EncodeToString(b)[:n]
+}
+
+// GetAuthenticityToken returns the authenticity token for the user. If one is not present, it makes it.
+func (c *Context) GetAuthenticityToken() string {
+	for _, cookie := range c.Cookies() {
+		if cookie.Name == "authenticity_token" {
+			return cookie.Value
+		}
+	}
+
+	// Generate the token.
+	token := generateRandomString(32)
+	c.SetCookie(&http.Cookie{
+		Name:     "authenticity_token",
+		Value:    token,
+		Path:     "/",
+		HttpOnly: true,
+	})
+	return token
+}
+
+// CSRFValidator is a special input that checks the authenticity token.
+type CSRFValidator struct{}
 
 // RequestHeaders returns the request headers.
 func (c *Context) RequestHeaders() http.Header {
@@ -462,28 +495,65 @@ func methodHandler[T any](c *Context, method string, handler func() (T, error), 
 
 	// Go through each input and parse it.
 	for _, v := range inputs {
+		// Check if this is a CSRF validator.
+		csrfValidator := false
+		switch v.(type) {
+		case CSRFValidator, *CSRFValidator:
+			csrfValidator = true
+		}
+
+		// Switch on the content type.
+		csrfValid := false
 		switch contentType {
 		case "application/json":
+			if csrfValidator {
+				csrfValid = true
+				break
+			}
 			if err := json.Unmarshal(postedBody, v); err != nil {
 				c.handleError(BadRequest{err})
 				return
 			}
 		case "application/xml", "text/xml":
+			if csrfValidator {
+				csrfValid = true
+				break
+			}
 			if err := xml.Unmarshal(postedBody, v); err != nil {
 				c.handleError(BadRequest{err})
 				return
 			}
 		case "application/x-msgpack", "application/msgpack":
+			if csrfValidator {
+				csrfValid = true
+				break
+			}
 			if err := msgpack.NewDecoder(bytes.NewReader(postedBody)).UseJSONTag(true).Decode(v); err != nil {
 				c.handleError(BadRequest{err})
 				return
 			}
 		case "application/yaml", "text/yaml":
+			if csrfValidator {
+				csrfValid = true
+				break
+			}
 			if err := yaml.Unmarshal(postedBody, v); err != nil {
 				c.handleError(BadRequest{err})
 				return
 			}
 		case "application/x-www-form-urlencoded":
+			if csrfValidator {
+				// Check if the authenticity token is valid.
+				var token string
+				for _, cookie := range c.req.Cookies() {
+					if cookie.Name == "authenticity_token" {
+						token = cookie.Value
+						break
+					}
+				}
+				csrfValid = token == c.GetAuthenticityToken()
+				break
+			}
 			var query url.Values
 			if len(postedBody) > 0 {
 				query, _ = url.ParseQuery(string(postedBody))
@@ -501,11 +571,28 @@ func methodHandler[T any](c *Context, method string, handler func() (T, error), 
 					c.handleError(BadRequest{err})
 					return
 				}
+
+				if csrfValidator {
+					s := c.req.MultipartForm.Value["authenticity_token"]
+					if len(s) == 0 {
+						s = []string{""}
+					}
+					authenticityToken := s[0]
+					csrfValid = authenticityToken == c.GetAuthenticityToken()
+					break
+				}
+
 				if err := formDecoder.Decode(v, c.req.MultipartForm.Value); err != nil {
 					c.handleError(BadRequest{err})
 					return
 				}
 			} else {
+				// Cannot be impacted by CSRF.
+				if csrfValidator {
+					csrfValid = true
+					break
+				}
+
 				// Check if this is io.Writer.
 				if w, ok := v.(io.Writer); ok {
 					// Write the body to the writer.
@@ -517,6 +604,12 @@ func methodHandler[T any](c *Context, method string, handler func() (T, error), 
 						return
 					}
 				}
+			}
+
+			// Handle an invalid authenticity token.
+			if csrfValidator && !csrfValid {
+				c.handleError(BadRequest{errors.New("invalid authenticity token")})
+				return
 			}
 		}
 	}
